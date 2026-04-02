@@ -33,8 +33,14 @@ function App() {
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Pipeline failed');
+        let errMsg = 'Pipeline failed';
+        try {
+          const errorData = await response.json();
+          errMsg = errorData.error || errMsg;
+        } catch {
+          errMsg = await response.text().catch(() => errMsg);
+        }
+        throw new Error(errMsg);
       }
 
       const data = await response.json();

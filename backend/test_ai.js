@@ -1,18 +1,25 @@
 require('dotenv').config();
-const { GoogleGenAI } = require('@google/genai');
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); 
 
 async function testAPI() {
+    console.log("Testing OpenRouter API with key:", process.env.OPENROUTER_API_KEY?.substring(0, 15) + '...');
     try {
-        console.log("Testing API with GEMINI_API_KEY...");
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: 'Say hello world'
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: 'google/gemma-3-27b-it:free',
+                messages: [{ role: 'user', content: 'Say hello world in one sentence.' }]
+            })
         });
-        console.log("Success! AI responded:", response.text);
+        const data = await response.json();
+        if (!response.ok) throw new Error(JSON.stringify(data));
+        console.log("✅ Success! AI responded:", data.choices[0].message.content);
     } catch (e) {
-        console.error("AI Error:", e);
+        console.error("❌ Error:", e.message);
     }
 }
+
 testAPI();

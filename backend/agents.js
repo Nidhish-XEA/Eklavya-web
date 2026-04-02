@@ -1,137 +1,106 @@
-const { GoogleGenAI, Type, Schema } = require('@google/genai');
+const MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }); // Default to env var
-
-const GENERATOR_MODEL = 'gemini-2.5-flash';
-const REVIEWER_MODEL = 'gemini-2.5-flash';
-
-// Define strictly structured schemas so the model output is reliably formatted
-const generatorSchema = {
-    type: Type.OBJECT,
-    properties: {
-        explanation: {
-            type: Type.STRING,
-            description: "A simple explanation of the topic tailored appropriately to the requested grade level."
+async function callAI(systemPrompt, userPrompt) {
+    const response = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://eklavya.me',
+            'X-Title': 'Eklavya AI Pipeline'
         },
-        mcqs: {
-            type: Type.ARRAY,
-            description: "3-5 Multiple Choice Questions related to the topic at the appropriate grade level.",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    question: { type: Type.STRING },
-                    options: { 
-                        type: Type.ARRAY, 
-                        items: { type: Type.STRING },
-                        description: "Exactly 4 options"
-                    },
-                    answer: { type: Type.STRING, description: "The correct option exactly as it appears in the options array" }
-                },
-                required: ["question", "options", "answer"]
-            }
-        }
-    },
-    required: ["explanation", "mcqs"]
-};
+        body: JSON.stringify({
+            model: MODEL,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
+        })
+    });
 
-const reviewerSchema = {
-    type: Type.OBJECT,
-    properties: {
-        status: {
-            type: Type.STRING,
-            enum: ["pass", "fail"],
-            description: "Assess if the content meets quality standards. Pass if good, fail if significant issues exist."
-        },
-        feedback: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "Actionable feedback. Must not be empty if status is fail."
-        }
-    },
-    required: ["status", "feedback"]
-};
-
-
-async function generateContent(grade, topic, feedback = null) {
-    let prompt = `You are an expert Educational Content Generator. Generate educational material for Grade ${grade} students on the topic: "${topic}".`;
-    
-    // Limit word count based on grade informally
-    if (grade < 5) {
-        prompt += ' Use very simple language and ensure the explanation is at most 50 words.';
-    } else if (grade < 9) {
-        prompt += ' Use clear and engaging language. The explanation should be around 100 words.';
-    } else {
-        prompt += ' Provide a comprehensive explanation suitable for high school, around 150-200 words.';
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(JSON.stringify(err));
     }
 
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) throw new Error('Empty response from AI');
+
+    // Strip markdown code fences if present
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleaned);
+}
+
+async function generateContent(grade, topic, feedback = null) {
+    let wordLimit = grade < 5 ? '50 words max' : grade < 9 ? 'around 100 words' : '150-200 words';
+
+    const systemPrompt = `You are an expert Educational Content Generator. 
+You MUST respond with ONLY valid JSON matching this exact structure:
+{
+  "explanation": "string",
+  "mcqs": [
+    {
+      "question": "string",
+      "options": ["string", "string", "string", "string"],
+      "answer": "string (must be one of the options exactly)"
+    }
+  ]
+}
+Rules: explanation must be ${wordLimit}. mcqs must have exactly 3-5 questions. Each question must have exactly 4 options. answer must exactly match one of the options.`;
+
+    let userPrompt = `Generate educational material for Grade ${grade} students on the topic: "${topic}".`;
     if (feedback && feedback.length > 0) {
-        prompt += `\n\nCRITICAL FIX: The previous attempt failed. Address this feedback strictly: ${feedback.join(' ')}`;
+        userPrompt += `\n\nCRITICAL: Previous attempt failed review. Fix these issues: ${feedback.join(' ')}`;
     }
 
     try {
-        const response = await ai.models.generateContent({
-            model: GENERATOR_MODEL,
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: generatorSchema,
-                temperature: 0.7
-            }
-        });
-
-        // The response format might require parsing depending on SDK specific output format.
-        // GenAI SDK returns text. We parse it:
-        return JSON.parse(response.text.replace(/```json/g, '').replace(/```/g, '').trim());
+        return await callAI(systemPrompt, userPrompt);
     } catch (e) {
-        console.error("Agent genai error", e);
+        console.error('Generator error:', e);
         throw e;
     }
 }
 
 async function reviewContent(generatedData) {
-    const prompt = `You are an expert Educational Reviewer. Evaluate the following generated content:
-    ${JSON.stringify(generatedData, null, 2)}
-    
-    Critically evaluate based on:
-    1. Age appropriateness
-    2. Clarity
-    3. Concept correctness
-    4. Ensure there are 3-5 MCQs and the answers are correct.
-    
-    Return strict JSON with 'status' (pass/fail) and actionable 'feedback' (array of strings if failing, or just praises if passing).`;
+    const systemPrompt = `You are an expert Educational Reviewer.
+You MUST respond with ONLY valid JSON matching this exact structure:
+{
+  "status": "pass" or "fail",
+  "feedback": ["string", "string"]
+}
+Rules: status must be exactly "pass" or "fail". feedback is an array of strings (praises if pass, issues if fail).`;
+
+    const userPrompt = `Evaluate this educational content critically for:
+1. Age appropriateness
+2. Clarity and engagement  
+3. Concept correctness
+4. MCQ quality (3-5 questions, correct answers, 4 options each)
+
+Content to review:
+${JSON.stringify(generatedData, null, 2)}`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: REVIEWER_MODEL,
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: reviewerSchema,
-                temperature: 0.3
-            }
-        });
-
-        return JSON.parse(response.text.replace(/```json/g, '').replace(/```/g, '').trim());
+        return await callAI(systemPrompt, userPrompt);
     } catch (e) {
-        console.error("Reviewer genai error", e);
+        console.error('Reviewer error:', e);
         throw e;
     }
 }
 
 async function runPipeline(grade, topic) {
-    let result = {
+    const result = {
         original: null,
         review: null,
         refined: null
     };
 
-    // Step 1: Generate
     result.original = await generateContent(grade, topic);
-
-    // Step 2: Review
     result.review = await reviewContent(result.original);
 
-    // Step 3: Conditional Refine (1 retry)
     if (result.review.status === 'fail') {
         result.refined = await generateContent(grade, topic, result.review.feedback);
     }
@@ -139,8 +108,4 @@ async function runPipeline(grade, topic) {
     return result;
 }
 
-module.exports = {
-    generateContent,
-    reviewContent,
-    runPipeline
-};
+module.exports = { generateContent, reviewContent, runPipeline };
