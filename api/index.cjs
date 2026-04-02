@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { runPipeline, generateContent, reviewContent } = require('./agents');
+const { runPipeline, generateContent, reviewContent } = require('./agents.cjs');
 
 const app = express();
 app.use(cors());
