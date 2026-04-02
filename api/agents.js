@@ -1,38 +1,60 @@
-const MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
+const MODELS = [
+    'nvidia/nemotron-3-nano-30b-a3b:free',
+    'google/gemma-3-27b-it:free',
+    'nousresearch/hermes-3-llama-3.1-405b:free',
+    'meta-llama/llama-3.3-70b-instruct:free'
+];
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 async function callAI(systemPrompt, userPrompt) {
-    const response = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://eklavya.me',
-            'X-Title': 'Eklavya AI Pipeline'
-        },
-        body: JSON.stringify({
-            model: MODEL,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.7,
-            response_format: { type: 'json_object' }
-        })
-    });
+    let lastErr = null;
+    for (const model of MODELS) {
+        try {
+            const response = await fetch(OPENROUTER_URL, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://eklavya.me',
+                    'X-Title': 'Eklavya AI Pipeline'
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ],
+                    temperature: 0.7,
+                    response_format: { type: 'json_object' }
+                })
+            });
 
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(JSON.stringify(err));
+            if (!response.ok) {
+                let err = await response.text().catch(() => '');
+                try { err = JSON.parse(err); } catch(e) {}
+                const msg = typeof err === 'string' ? err : JSON.stringify(err);
+                if (response.status === 429 || response.status >= 500) {
+                    lastErr = new Error(`Provider busy for ${model}: ${msg}`);
+                    continue; // try next model
+                }
+                throw new Error(msg); // auth or bad request error, don't loop
+            }
+
+            const data = await response.json();
+            const text = data.choices?.[0]?.message?.content;
+            if (!text) {
+                lastErr = new Error('Empty response from AI for ' + model);
+                continue;
+            }
+
+            const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            return JSON.parse(cleaned);
+        } catch (err) {
+            lastErr = err;
+            console.error(`AI Model ${model} failed, trying next...`, err.message);
+        }
     }
-
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('Empty response from AI');
-
-    // Strip markdown code fences if present
-    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleaned);
+    throw new Error('All AI models failed. Last error: ' + (lastErr?.message || String(lastErr)));
 }
 
 async function generateContent(grade, topic, feedback = null) {
