@@ -33,7 +33,7 @@ app.post('/review', async (req, res) => {
     }
 });
 
-app.post(['/pipeline', '/api/pipeline', '/_/backend/pipeline'], async (req, res) => {
+app.post('/pipeline', async (req, res) => {
     try {
         const { grade, topic } = req.body;
         if (!grade || !topic) return res.status(400).json({ error: 'Grade and topic are required' });
@@ -46,11 +46,8 @@ app.post(['/pipeline', '/api/pipeline', '/_/backend/pipeline'], async (req, res)
     }
 });
 
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = 4500;
-    app.listen(PORT, () => {
-        console.log(`Backend is running on http://localhost:${PORT}`);
-        setInterval(() => {}, 1000 * 60 * 60); 
-    });
-}
+const PORT = process.env.PORT || 4500;
+app.listen(PORT, () => {
+    console.log(`Backend running on port ${PORT}`);
+});
 module.exports = app;

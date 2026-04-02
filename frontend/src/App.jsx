@@ -26,8 +26,8 @@ function App() {
       // Simulate rapid UX step-through
       setTimeout(() => setCurrentStep('reviewing'), 1500); 
 
-      const API_BASE = import.meta.env.VITE_API_URL || '';
-      const response = await fetch(`${API_BASE}/_/backend/pipeline`, {
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4500';
+      const response = await fetch(`${API_BASE}/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ grade: parseInt(grade), topic })
